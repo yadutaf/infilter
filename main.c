@@ -41,8 +41,8 @@ struct namespace namespaces[] = {
     {"ipc",  CLONE_NEWIPC,  1, -1},
     {"net",  CLONE_NEWNET,  1, -1},
     {"uts",  CLONE_NEWUTS,  1, -1},
-    {"user", CLONE_NEWUSER, 2, -1},
     {"mnt",  CLONE_NEWNS,   2, -1},
+    {"user", CLONE_NEWUSER, 2, -1},
     {NULL, 0, 0, 0},
 };
 
