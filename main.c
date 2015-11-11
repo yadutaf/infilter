@@ -592,6 +592,10 @@ int main(int argc, char** argv) {
     ptrace(PTRACE_DETACH, child, 0, 0);
     waitpid(child, &status, 0);
 
-    return status;
+    if(WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    } else {
+        return 1;
+    }
 }
 
