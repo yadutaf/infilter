@@ -517,6 +517,12 @@ int main(int argc, char** argv) {
 
     }
 
+    // Set user to root in the container context, drop any supplementary groups
+    // best effort calls (no checks)
+    inject_syscall(child, SYS_setreuid, 0, 0);
+    inject_syscall(child, SYS_setregid, 0, 0);
+    inject_syscall(child, SYS_setgroups, 0, 0);
+
     // Restore original syscall
     if(ptrace(PTRACE_SETREGS, child, NULL, &regs_in) == -1) {
         perror("ptrace");
