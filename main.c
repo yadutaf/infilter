@@ -567,7 +567,7 @@ int main(int argc, char** argv) {
     }
   
     // exit
-    ptrace(PTRACE_DETACH, child);
+    ptrace(PTRACE_DETACH, child, 0, 0);
     waitpid(child, &status, 0);
 
     return status;
