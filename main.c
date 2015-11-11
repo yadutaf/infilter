@@ -28,7 +28,7 @@
 #define STAGE_HOST 1
 #define STAGE_CONTAINER 2
 
-const char* ld_full_path = "/lib/x86_64-linux-gnu/ld-2.21.so";
+const char* ld_path_prefix = "/lib/x86_64-linux-gnu/ld+";
 struct namespace {
     const char* proc_name;
     int flag;
@@ -67,6 +67,36 @@ const char* proxy_whitelist[] = {
     "/usr/share/terminfo/+",
     NULL,
 };
+
+// return 1 if prefix match. 0 otherwise
+// if prefix does not end with '+', consider exact match only
+// if the prefix is empty, consider not a match
+int str_prefix_match(const char* prefix, const char* candidate) {
+    int prefix_len;
+
+    // Sanity
+    if(prefix == NULL || candidate == NULL) {
+        return 0;
+    }
+
+    prefix_len = strlen(prefix);
+    if(!prefix_len) {
+        return 0;
+    }
+
+    // prefix ?
+    if(prefix[prefix_len-1] == '+') {
+        if(strncmp(prefix, candidate, prefix_len-1) == 0) {
+            return 1;
+        }
+    }
+
+    // exact match ?
+    if(strcmp(prefix, candidate) == 0) {
+        return 1;
+    }
+
+}
 
 int proc_open_mem(pid_t pid) {
     char path[255];
@@ -173,7 +203,7 @@ int in_ld(unsigned long long int addr, unsigned int pid) {
 
                 // is it out target ?
                 if(index == 5) {
-                    if(strcmp(field, ld_full_path) != 0) {
+                    if(str_prefix_match(ld_path_prefix, field) != 1) {
                         addrs = NULL;
                     }
                 }
@@ -273,21 +303,7 @@ int proxy_is_ok(const char *pathname) {
     int candidate_len;
 
     for(candidate=proxy_whitelist; *candidate; candidate++) {
-        candidate_len = strlen(*candidate);
-
-        if(!candidate_len) {
-            continue;
-        }
-
-        // prefix ?
-        if((*candidate)[candidate_len-1] == '+') {
-            if(strncmp(*candidate, pathname, candidate_len-1) == 0) {
-                return 1;
-            }
-        }
-
-        // exact match ?
-        if(strcmp(*candidate, pathname) == 0) {
+        if(str_prefix_match(*candidate, pathname) == 1) {
             return 1;
         }
     }
