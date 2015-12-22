@@ -9,8 +9,8 @@ make
 
 ## Presentation
 
-``Infilter`` will run any binary executable in any running container, without
-patching. It is especially usefull for minimalistic containers with no
+``Infilter`` will run any binary executable in any running container without
+patching. It is especially useful for minimalistic containers with no
 monitoring/debugging tools like alpine or busybox based Dockers.
 
 You may use it to:
@@ -20,9 +20,9 @@ You may use it to:
  - wrap ``sftp-server`` to enter a customer container on demand
  - ...
 
-``Infilter`` will happily run with any Namespace based Linux container. Be it
-Docker, LXC, runc, rkt or a custom implementation. Please note that it currently
-assumes amd64 kernel ABI.
+``Infilter`` will happily run with any namespace-based Linux container, be it
+Docker, LXC, runc, rkt or any other custom implementation. Please note that
+it currently assumes the amd64 kernel ABI.
 
 NOTE: ``Infilter`` will *not* work as expected if it relies on support files
 to be available at runtime. For example, it will not be able to run a python
@@ -43,16 +43,18 @@ this may be a security threat. Hence not an option.
 
 ### Mounting a special volume with required tools
 
-Mounting a special volume with required tools works great when all required tools
-are well known and all required shared libraries are either fully trusted either
+An alternative approach to the same functionality is to mount a volume with your
+preferred tools. This works great when all required tools are well known in
+advance and all required shared libraries are either fully trusted or
 statically linked. If these tools rely on any library in the container, this is a
 potential vulnerability as a malicious user could manipulate a library to run
 arbitrary code as privileged user.
 
 ### Patching
 
-Patching implies maintenance, keeping up to date with security fixes and careful
-tunning to make sure ``setns`` are done at the right time.
+Another alternative approach is to patch the desired tool with the appropriate 
+system calls. Patching implies maintenance, keeping up to date with security
+fixes and careful tuning to make sure ``setns`` is called at the right time.
 
 ## How does it work?
 
@@ -72,8 +74,8 @@ If terminfo was not required, ``infilter`` will simply detach itself and let the
 execution go.
 
 If terminfo was potentially required, ``infilter`` will attempt to intercept
-terminfo files open/stat/access operations and proxy them in host context at
-runtime as soon as one terminfo has been sucessfuly opened, ``infilter`` will
+terminfo files open/stat/access operations and proxy them to the host context
+at runtime. As soon as one terminfo has been sucessfuly opened, ``infilter`` will
 detach itself and let the execution go.
 
 For more details, please see the code. It is extensively documented.
