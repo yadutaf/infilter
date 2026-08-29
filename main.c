@@ -107,7 +107,7 @@ int proc_open_mem(pid_t pid) {
         perror("snprintf");
         return -1;
     }
-    
+
     fd = open(path, O_RDWR);
     if(fd == -1) {
         perror("open mem");
@@ -127,7 +127,7 @@ int proc_read_data(int fd, void* src, void* dst, size_t len) {
     if(read(fd, dst, len) == -1) {
         perror("read mem");
         return -1;
-    } 
+    }
 }
 
 int proc_write_data(int fd, void* src, void* dst, size_t len) {
@@ -140,7 +140,7 @@ int proc_write_data(int fd, void* src, void* dst, size_t len) {
     if(write(fd, src, len) == -1) {
         perror("write mem");
         return -1;
-    } 
+    }
 }
 
 // Read arbitrary data from PID's memory. Ptrace PEEKTEXT is too slow/risky to use
@@ -181,7 +181,7 @@ int in_ld(unsigned long long int addr, unsigned int pid) {
         }
 
         while((read = getline(&line, &len, fp)) != -1) {
-            parsing = line;   
+            parsing = line;
             for (index = 0; index<6; index++) {
                 field = strtok(parsing, " \t\n");
                 if (field == NULL)
@@ -315,7 +315,7 @@ int proxy_is_ok(const char *pathname) {
 int proxy_stat(int mem_fd, const char *pathname, struct stat *buf) {
     struct stat src;
     int ret;
-    
+
     ret = stat(pathname, &src);
     proc_write_data(mem_fd, &src, buf, sizeof(src));
 
@@ -386,31 +386,86 @@ int inject_close(pid_t pid, int fd) {
     return inject_syscall(pid, SYS_close, fd, 0);
 }
 
-pid_t create_child(char **argv) {
+int resolve_path(char* target, char* buffer, int buffer_len) {
+    int target_len = strlen(target);
+
+    if (strchr(target, '/') != NULL) {
+        strcpy(buffer, target);
+        if (access(buffer, R_OK|X_OK) == 0) {
+            return 0;
+        } else {
+            goto err;
+        }
+    } else {
+        char* PATH = getenv("PATH");
+        if (PATH == NULL) {
+            goto err;
+        }
+
+        // Iterate over the path components
+        int buffer_offset = 0;
+        for (int i = 0; ; i++)
+        {
+            if (PATH[i] == ':' || PATH[i] == 0) {
+                if (buffer_offset + target_len + 2 < buffer_len) {
+                    buffer[buffer_offset++] = '/';
+                    strcpy(buffer+buffer_offset, target);
+
+                    if (access(buffer, R_OK|X_OK) == 0) {
+                        return 0;
+                    }
+                }
+
+                if (PATH[i] == 0) {
+                    goto err;
+                }
+
+                buffer_offset = 0;
+            } else {
+                if (buffer_offset + target_len + 2 >= buffer_len) {
+                    // Ignore this path chunk, it wont't fit
+                    continue;
+                }
+
+                buffer[buffer_offset++] = PATH[i];
+            }
+        }
+
+        goto err;
+    }
+
+    return 0;
+err:
+    buffer[0] = 0;
+    return -1;
+}
+
+pid_t create_child(char* command, char **argv) {
     pid_t child = fork();
 
     if(child == -1) {
         perror("fork");
         return 1;
     }
-    
+
     if(child == 0) {
         ptrace(PTRACE_TRACEME, 0, NULL, NULL);
         kill(getpid(), SIGSTOP);
-        execvp(*argv, argv);
+        execv(command, argv);
         perror("exec");
         exit(1);
     }
     return child;
 }
 
-int main(int argc, char** argv) { 
+int main(int argc, char** argv) {
     // parent vars
     int mem_fd;
     int status;
     int insyscall = 0;
     pid_t pid, child;
     char path[255];
+    char command[255];
     struct user_regs_struct regs;
     struct user_regs_struct regs_in;
     struct user_regs_struct regs_out;
@@ -429,6 +484,11 @@ int main(int argc, char** argv) {
     pid = atoi(argv[1]);
     if(!pid) {
         fprintf(stderr, "Invalid PID: %s\n", argv[1]);
+        exit(1);
+    }
+
+    if (resolve_path(argv[2], command, 255) != 0) {
+        fprintf(stderr, "Command not found: %s\n", argv[2]);
         exit(1);
     }
 
@@ -463,7 +523,7 @@ int main(int argc, char** argv) {
     }
 
     // create child
-    child = create_child(argv+2);
+    child = create_child(command, argv+2);
 
     // Close any leaked fd at this stage
     for(ns = namespaces; ns->proc_name; ns++) {
@@ -504,7 +564,7 @@ int main(int argc, char** argv) {
     for(ns = namespaces; ns->proc_name; ns++) {
         if(ns->stage != STAGE_CONTAINER)
             continue;
-       
+
         if(inject_setns(child, ns->fd, ns->flag) == -1) {
             perror("inject_setns");
             exit(1);
@@ -578,7 +638,7 @@ int main(int argc, char** argv) {
             }
 
             // KEEP THIS: you'll need it when debugging
-            /*fprintf(stderr, "%lld(%lld, %lld)=%lld\n", 
+            /*fprintf(stderr, "%lld(%lld, %lld)=%lld\n",
                 regs_in.orig_rax,
                 regs_in.rdi,
                 regs_in.rsi,
@@ -587,7 +647,7 @@ int main(int argc, char** argv) {
         }
         if(wait_for_syscall(child, NULL) == -1) exit(1);
     }
-  
+
     // exit
     ptrace(PTRACE_DETACH, child, 0, 0);
     waitpid(child, &status, 0);
@@ -598,4 +658,3 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
-

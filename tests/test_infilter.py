@@ -39,9 +39,28 @@ def target_pid():
         check=True,
     )
 
-def test_busybox_static(target_pid: int):
+def test_busybox_absolute(target_pid: int):
+    '''
+    Make sure infilter can execute an absolute path inside a container
+    '''
     p = subprocess.run(
         ['sudo', './infilter', str(target_pid), '/bin/busybox', 'ps'],
+        capture_output=True,
+        universal_newlines=True,
+    )
+
+    assert p.returncode == 0, f"Failed to infilter busybox ps: {p.stderr}"
+
+    lines = p.stdout.splitlines()
+
+    assert len(lines) == 3, f"ps should return the following lines: Header, Target, Infiltered. Got: {p.stdout}"
+
+def test_busybox_path(target_pid: int):
+    '''
+    Make sure infilter can execute an absolute a binary in PATH inside a container
+    '''
+    p = subprocess.run(
+        ['sudo', './infilter', str(target_pid), 'busybox', 'ps'],
         capture_output=True,
         universal_newlines=True,
     )
