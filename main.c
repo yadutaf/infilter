@@ -19,6 +19,10 @@
 #include <string.h>
 #include <limits.h>
 
+// elf inspection
+#include <sys/mman.h>
+#include <elf.h>
+
 // syscall introspection
 #include <sys/ptrace.h>
 #include <sys/types.h>
@@ -29,7 +33,6 @@
 #define STAGE_HOST 1
 #define STAGE_CONTAINER 2
 
-const char* ld_path_prefix = "/lib/x86_64-linux-gnu/ld+";
 struct namespace {
     const char* proc_name;
     int flag;
@@ -49,7 +52,7 @@ struct namespace namespaces[] = {
 
 // terminfo special case
 char terminfo_suffix[PATH_MAX] = {0};
-const char* terminfo_lib_fullpath = "/lib/x86_64-linux-gnu/libtinfo.so.5";
+const char* terminfo_lib_fullpath = "/lib/x86_64-linux-gnu/libtinfo.so.6";
 const char* terminfo_candidates_locations[] = {
     "/etc",
     "/lib",
@@ -153,9 +156,14 @@ int proc_read_string(int fd, char* src, char* dst, size_t len) {
     return 0;
 }
 
-int in_ld(unsigned long long int addr, unsigned int pid) {
+int in_ld(unsigned long long int addr, unsigned int pid, char* loader) {
     static unsigned long long int begin_addr = 0;
     static unsigned long long int end_addr = 0;
+
+    // handle statically linked binaries
+    if (loader == NULL) {
+        return 0;
+    }
 
     // load + parse /proc/<pid>/maps
     if(begin_addr == 0) {
@@ -202,9 +210,9 @@ int in_ld(unsigned long long int addr, unsigned int pid) {
                     }
                 }
 
-                // is it out target ?
+                // is it our target ?
                 if(index == 5) {
-                    if(str_prefix_match(ld_path_prefix, field) != 1) {
+                    if(strcmp(loader, field) != 0) {
                         addrs = NULL;
                     }
                 }
@@ -441,6 +449,57 @@ err:
     return -1;
 }
 
+// Extracts the requested dynamic loader path (PT_INTERP) from an ELF binary.
+char *get_elf_interpreter(const char *filepath) {
+    int fd = open(filepath, O_RDONLY);
+    if (fd < 0) {
+        return NULL;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0 || st.st_size < (off_t)sizeof(Elf64_Ehdr)) {
+        close(fd);
+        return NULL;
+    }
+
+    void *map = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd); // File descriptor can be closed immediately after mapping
+    if (map == MAP_FAILED) {
+        return NULL;
+    }
+
+    unsigned char *e_ident = (unsigned char *)map;
+    char *interpreter = NULL;
+
+    // Verify magic bytes (\x7fELF)
+    if (memcmp(e_ident, ELFMAG, SELFMAG) != 0) {
+        goto out;
+    }
+
+    // Only support 64 bit binaries
+    if (e_ident[EI_CLASS] == ELFCLASS64) {
+        Elf64_Ehdr *ehdr = (Elf64_Ehdr *)map;
+        Elf64_Phdr *phdr = (Elf64_Phdr *)((char *)map + ehdr->e_phoff);
+
+        for (int i = 0; i < ehdr->e_phnum; i++) {
+            if (phdr[i].p_type == PT_INTERP) {
+                if (phdr[i].p_offset + phdr[i].p_filesz <= st.st_size) {
+                    char* raw_interpreter = strndup((char *)map + phdr[i].p_offset, phdr[i].p_filesz);
+                    interpreter = canonicalize_file_name(raw_interpreter);
+                    free(raw_interpreter);
+                }
+                break;
+            }
+        }
+    } else {
+        goto out;
+    }
+
+out:
+    munmap(map, st.st_size);
+    return interpreter;
+}
+
 pid_t create_child(char* command, char **argv) {
     pid_t child = fork();
 
@@ -492,6 +551,8 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Command not found: %s\n", argv[2]);
         exit(1);
     }
+
+    char *loader = get_elf_interpreter(command);
 
     /* Open + leak fds */
     for(ns = namespaces; ns->proc_name; ns++) {
@@ -550,7 +611,7 @@ int main(int argc, char** argv) {
     // wait until 1st syscall outside of ld, break on entry
     while(1) {
         if(wait_for_syscall(child, &regs_in) == -1) break;
-        if(!in_ld(regs_in.rip, child)) break;
+        if(!in_ld(regs_in.rip, child, loader)) break;
 
         // detect special treatments
         if(regs_in.orig_rax == SYS_open) {
@@ -559,7 +620,10 @@ int main(int argc, char** argv) {
         if(wait_for_syscall(child, &regs_in) == -1) break;
     }
 
-    // At this point, we are *inside* a syscall
+    // At this point, we are *inside* a syscall, after ld
+    if (loader) {
+        free(loader);
+    }
 
     // Switch child namespaces + cleanup
     for(ns = namespaces; ns->proc_name; ns++) {
