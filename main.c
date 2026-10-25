@@ -30,6 +30,9 @@
 #include <sys/user.h>
 #include <sys/syscall.h>
 
+// available namespaces
+#include <dirent.h>
+
 #define STAGE_HOST 1
 #define STAGE_CONTAINER 2
 
@@ -531,6 +534,55 @@ pid_t create_child(char* command, char **argv) {
     return child;
 }
 
+int get_supported_namespaces() {
+    DIR* dir = opendir("/proc/self/ns");
+    if(dir == NULL) {
+        perror("Failed to open /proc/self/ns");
+        return -1;
+    }
+
+    int supported_namespaces = 0;
+    while (1) {
+        struct dirent* ent = readdir(dir);
+        errno = 0;
+        if (ent == NULL) {
+            if (errno == 0) {
+                break;
+            } else {
+                perror("Failed to read /proc/self/ns");
+                return -1;
+            }
+        }
+
+        if (strcmp("cgroup", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWCGROUP;
+        }
+        if (strcmp("ipc", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWIPC;
+        }
+        if (strcmp("net", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWNET;
+        }
+        if (strcmp("mnt", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWNS;
+        }
+        if (strcmp("pid", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWPID;
+        }
+        if (strcmp("time", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWTIME;
+        }
+        if (strcmp("user", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWUSER;
+        }
+        if (strcmp("uts", ent->d_name) == 0) {
+            supported_namespaces |= CLONE_NEWUTS;
+        }
+    }
+
+    return supported_namespaces;
+}
+
 int main(int argc, char** argv) {
     // parent vars
     int mem_fd;
@@ -574,6 +626,17 @@ int main(int argc, char** argv) {
     //   - after the fork when root
     // - CLONE_NEWTIME requires actual root on the host
 
+    int supported_namespaces = get_supported_namespaces();
+    if (supported_namespaces == -1) {
+        fprintf(stderr, "Failed to get the list of supported namespaces");
+        exit(1);
+    }
+
+    if (geteuid() != 0 && !(supported_namespaces & CLONE_NEWUSER)) {
+        fprintf(stderr, "User namespaces are not supported on this machine. Re-run as root.");
+        exit(1);
+    }
+
     stage1_ns = CLONE_NEWPID;
     stage2_ns = CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS;
 
@@ -582,6 +645,10 @@ int main(int argc, char** argv) {
     } else {
         stage1_ns |= CLONE_NEWUSER;
     }
+
+    // Mask unsupported namespaces
+    stage1_ns &= supported_namespaces;
+    stage2_ns &= supported_namespaces;
 
     // Locate the Dynamic loader
     char *loader = get_elf_interpreter(command);

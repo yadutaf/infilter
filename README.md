@@ -32,7 +32,7 @@ Please note that it currently assumes the amd64 kernel ABI.
 
 ## Compatibility
 
-Supported Linux version: >= 5.8 (August 2020), with support for `CLONE_NEWTIME` in `setns()`.
+Supported Linux version: >= 5.8 (August 2020), with support for `pidfd` in `setns()`.
 
 Supported namespaces:
 
@@ -41,9 +41,11 @@ Supported namespaces:
 - `NET`: The network namespace
 - `NS`: The mount namespace
 - `PID`: The PID namespace
-- `TIME`: The time namespace
-- `USER`: The user namespace, used to grant 'root' on unprivileged users.
+- `TIME`: The time namespace. Only when running as 'root'.
+- `USER`: The user namespace. Mandatory when not running root-less.
 - `UTS`: The hostname namespace
+
+All namespaces supported by the host are automatically joined.
 
 Supported architectures: x86-64 only.
 
