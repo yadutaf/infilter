@@ -40,16 +40,6 @@ struct namespace {
     int fd;
 };
 
-struct namespace namespaces[] = {
-    {"pid",  CLONE_NEWPID,  1, -1}, // PID actually changes on fork, hence stage 1
-    {"ipc",  CLONE_NEWIPC,  1, -1},
-    {"net",  CLONE_NEWNET,  1, -1},
-    {"uts",  CLONE_NEWUTS,  1, -1},
-    {"mnt",  CLONE_NEWNS,   2, -1},
-    {"user", CLONE_NEWUSER, 2, -1},
-    {NULL, 0, 0, 0},
-};
-
 // terminfo special case
 char terminfo_suffix[PATH_MAX] = {0};
 const char* terminfo_lib_fullpath = "/lib/x86_64-linux-gnu/libtinfo.so.6";
@@ -100,6 +90,29 @@ int str_prefix_match(const char* prefix, const char* candidate) {
         return 1;
     }
 
+}
+
+// wrapper around pidfd_open. Unsets the CLOEXEC flag as we need inheritance.
+int pidfd_open(pid_t pid, unsigned int flags) {
+    int fd = syscall(SYS_pidfd_open, pid, flags);
+    if (fd < 0) {
+        errno = -fd;
+        return -1;
+    }
+
+    int fd_flags = fcntl (fd, F_GETFD);
+    if (flags == -1) {
+        close(fd);
+        return -1;
+    }
+
+    int ret = fcntl (fd, F_SETFD, fd_flags & ~FD_CLOEXEC);
+    if (ret == -1) {
+        close(fd);
+        return -1;
+    }
+
+    return fd;
 }
 
 int proc_open_mem(pid_t pid) {
@@ -370,7 +383,7 @@ int inject_syscall(pid_t pid, unsigned long long int nr, unsigned long long int 
     regs.rsi = rsi;
     regs.rip -= 2;
     if(ptrace(PTRACE_SETREGS, pid, NULL, &regs) == -1) {
-        perror("ptrace");
+        perror("inject_syscall: Failed to inject syscall registers");
         return -1;
     }
 
@@ -521,9 +534,11 @@ pid_t create_child(char* command, char **argv) {
 int main(int argc, char** argv) {
     // parent vars
     int mem_fd;
+    int target_fd = -1;
     int status;
     int insyscall = 0;
-    pid_t pid, child;
+    int stage1_ns, stage2_ns;
+    pid_t target_pid, child;
     char path[PATH_MAX];
     char command[PATH_MAX];
     struct user_regs_struct regs;
@@ -537,13 +552,13 @@ int main(int argc, char** argv) {
 
     /* Parse arguments */
     if(argc <= 2) {
-        fprintf(stderr, "Usage: %s PID [command...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s TARGET_PID [command...]\n", argv[0]);
         exit(1);
     }
 
-    pid = atoi(argv[1]);
-    if(!pid) {
-        fprintf(stderr, "Invalid PID: %s\n", argv[1]);
+    target_pid = atoi(argv[1]);
+    if(!target_pid) {
+        fprintf(stderr, "Invalid TARGET_PID: %s\n", argv[1]);
         exit(1);
     }
 
@@ -552,46 +567,48 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
+    // Choreograph the namespace change dance
+    // - CLONE_NEWPID always needs to be performed before the `fork` as the process can not change PID
+    // - CLONE_NEWUSER needs to be done
+    //   - before the fork when not root, to gain CAP_SYSADMIN
+    //   - after the fork when root
+
+    stage1_ns = CLONE_NEWPID;
+    stage2_ns = CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS;
+
+    if (geteuid() == 0) {
+        stage2_ns |= CLONE_NEWUSER;
+    } else {
+        stage1_ns |= CLONE_NEWUSER;
+    }
+
+    // Locate the Dynamic loader
     char *loader = get_elf_interpreter(command);
 
-    /* Open + leak fds */
-    for(ns = namespaces; ns->proc_name; ns++) {
-        // grab a fd to the ns
-        if(snprintf(path, PATH_MAX, "/proc/%d/ns/%s", pid, ns->proc_name) < 0) {
-            perror("snprintf");
-            exit(1);
-        }
-
-        ns->fd = open(path, O_RDONLY);
-        if(ns->fd < 0) {
-            perror("open");
-            exit(1);
-        }
+    // Open and leak target fd. Will be used by setns
+    // Opening in the parent allows us to know the FD number. Can be closed as soon as the child has forked.
+    target_fd = pidfd_open(target_pid, 0);
+    if (target_fd == -1) {
+        perror("Failed to get a file descriptor on the target PID.");
+        exit(1);
     }
+
+    // Stage 1 netns change
+    if(setns(target_fd, stage1_ns) == -1) {
+        perror("setns");
+        return 1;
+    }
+
+    // Open and leak terminfo fd
+    // Opening in the parent allows us to know the FD number. Can be closed as soon as the child has forked.
     terminfo_fd = terminfo_open();
-
-    // Mount all stage 1 namespaces now + close fds
-    for(ns = namespaces; ns->proc_name; ns++) {
-        if(ns->stage != STAGE_HOST)
-            continue;
-
-        if(setns(ns->fd, ns->flag) == -1) {
-            perror("setns");
-            return 1;
-        }
-
-        close(ns->fd);
-        ns->fd = -1;
-    }
 
     // create child
     child = create_child(command, argv+2);
 
     // Close any leaked fd at this stage
-    for(ns = namespaces; ns->proc_name; ns++) {
-        close(ns->fd);
-    }
     close(terminfo_fd);
+    close(target_fd);
 
     waitpid(child, &status, 0);
     ptrace(PTRACE_SETOPTIONS, child, 0, PTRACE_O_TRACESYSGOOD);
@@ -625,21 +642,15 @@ int main(int argc, char** argv) {
         free(loader);
     }
 
-    // Switch child namespaces + cleanup
-    for(ns = namespaces; ns->proc_name; ns++) {
-        if(ns->stage != STAGE_CONTAINER)
-            continue;
+    // Stage 2 netns change
+    if(inject_setns(child, target_fd, stage2_ns) < 0) {
+        perror("inject_setns");
+        exit(1);
+    }
 
-        if(inject_setns(child, ns->fd, ns->flag) == -1) {
-            perror("inject_setns");
-            exit(1);
-        }
-
-        if(inject_close(child, ns->fd) == -1) {
-            perror("inject_close");
-            exit(1);
-        }
-
+    if(inject_close(child, target_fd) == -1) {
+        perror("inject_close");
+        exit(1);
     }
 
     // Set user to root in the container context, drop any supplementary groups

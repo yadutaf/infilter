@@ -4,7 +4,7 @@ Run *any* (read: most) binary in *any* container.
 
 ```
 make
-sudo ./infilter $(docker inspect --format='{{.State.Pid}}' my-minimal-container) htop
+./infilter $(docker inspect --format='{{.State.Pid}}' my-minimal-container) htop
 ```
 
 ## Presentation
