@@ -70,6 +70,27 @@ released. The target program is now running *inside* the container.
 
 For more details, please see the code. It is extensively documented.
 
+## Hacking
+
+### Building
+
+```shell
+make
+```
+
+### Testing
+
+The tests depends on:
+
+- `uv` for the dependencies
+- `podman` as test target
+
+Once both are installed, running the tests is a matter of:
+
+```shell
+make test
+```
+
 ## License
 
 MIT
