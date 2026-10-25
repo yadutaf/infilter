@@ -17,6 +17,7 @@
 
 // parser
 #include <string.h>
+#include <limits.h>
 
 // syscall introspection
 #include <sys/ptrace.h>
@@ -47,7 +48,7 @@ struct namespace namespaces[] = {
 };
 
 // terminfo special case
-char terminfo_suffix[255] = {0};
+char terminfo_suffix[PATH_MAX] = {0};
 const char* terminfo_lib_fullpath = "/lib/x86_64-linux-gnu/libtinfo.so.5";
 const char* terminfo_candidates_locations[] = {
     "/etc",
@@ -99,11 +100,11 @@ int str_prefix_match(const char* prefix, const char* candidate) {
 }
 
 int proc_open_mem(pid_t pid) {
-    char path[255];
+    char path[PATH_MAX];
     int fd;
 
     // open memory
-    if(snprintf(path, 255, "/proc/%d/mem", pid) < 0) {
+    if(snprintf(path, PATH_MAX, "/proc/%d/mem", pid) < 0) {
         perror("snprintf");
         return -1;
     }
@@ -257,7 +258,7 @@ char* terminfo_build_suffix() {
 }
 
 int terminfo_need(int mem_fd, char* base_address) {
-    char path[255];
+    char path[PATH_MAX];
     char** candidate;
 
     if(proc_read_string(mem_fd, base_address, path, sizeof(path)) == -1) {
@@ -272,7 +273,7 @@ int terminfo_need(int mem_fd, char* base_address) {
 }
 
 int terminfo_open() {
-    char path[255];
+    char path[PATH_MAX];
     const char** candidate;
     char* suffix = terminfo_build_suffix();
     int fd;
@@ -464,8 +465,8 @@ int main(int argc, char** argv) {
     int status;
     int insyscall = 0;
     pid_t pid, child;
-    char path[255];
-    char command[255];
+    char path[PATH_MAX];
+    char command[PATH_MAX];
     struct user_regs_struct regs;
     struct user_regs_struct regs_in;
     struct user_regs_struct regs_out;
@@ -487,7 +488,7 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
-    if (resolve_path(argv[2], command, 255) != 0) {
+    if (resolve_path(argv[2], command, PATH_MAX) != 0) {
         fprintf(stderr, "Command not found: %s\n", argv[2]);
         exit(1);
     }
@@ -495,7 +496,7 @@ int main(int argc, char** argv) {
     /* Open + leak fds */
     for(ns = namespaces; ns->proc_name; ns++) {
         // grab a fd to the ns
-        if(snprintf(path, 255, "/proc/%d/ns/%s", pid, ns->proc_name) < 0) {
+        if(snprintf(path, PATH_MAX, "/proc/%d/ns/%s", pid, ns->proc_name) < 0) {
             perror("snprintf");
             exit(1);
         }
