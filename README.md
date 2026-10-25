@@ -30,6 +30,23 @@ Please note that it currently assumes the amd64 kernel ABI.
 > to be available at runtime. For example, it will not be able to run a python
 > program or programs relying on runtime loading of 'terminfo' database like `htop`.
 
+## Compatibility
+
+Supported Linux version: >= 5.8 (August 2020), with support for `CLONE_NEWTIME` in `setns()`.
+
+Supported namespaces:
+
+- `CGROUP`: The cgroup namespace
+- `IPC`: The IPC namespace
+- `NET`: The network namespace
+- `NS`: The mount namespace
+- `PID`: The PID namespace
+- `TIME`: The time namespace
+- `USER`: The user namespace, used to grant 'root' on unprivileged users.
+- `UTS`: The hostname namespace
+
+Supported architectures: x86-64 only.
+
 ## Infilter vs...
 
 ### ``nsenter``, ``lxc-attach``, ``docker-exec``, ...

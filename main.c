@@ -572,12 +572,13 @@ int main(int argc, char** argv) {
     // - CLONE_NEWUSER needs to be done
     //   - before the fork when not root, to gain CAP_SYSADMIN
     //   - after the fork when root
+    // - CLONE_NEWTIME requires actual root on the host
 
     stage1_ns = CLONE_NEWPID;
-    stage2_ns = CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS;
+    stage2_ns = CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS;
 
     if (geteuid() == 0) {
-        stage2_ns |= CLONE_NEWUSER;
+        stage2_ns |= CLONE_NEWUSER | CLONE_NEWTIME;
     } else {
         stage1_ns |= CLONE_NEWUSER;
     }
